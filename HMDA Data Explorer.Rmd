@@ -1,0 +1,422 @@
+---
+title: "HMDA Data Explorer 2023"
+author: "Antonio Solorio"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r library loading}
+library(arrow)
+library(tidyverse)
+library(leaflet)
+library(shiny)
+library(htmltools)
+library(RColorBrewer)
+library(tigris)
+library(sf)
+library(scales)
+library(htmlwidgets)
+```
+```{r data loading, include = FALSE}
+HMDA_DATA <- read_feather("Race & Ethnicity Labeled HMDA Data.feather")
+########## Tract Shapefiles ##########
+tract_shapefiles <- tracts(cb = TRUE, year = 2023)%>%
+  tibble()%>%
+  mutate(area_name = paste0(NAMELSAD, ", ",STUSPS))%>%
+  select(GEOID,area_name,geometry)
+########## County Shapefiles ########
+county_shapefiles <- counties(cb = TRUE, year = 2023)%>%
+  tibble()%>%
+  mutate(area_name = paste0(NAMELSAD, ", ", STUSPS))%>%
+  select(GEOID,area_name,geometry)
+```
+```{r map data prep}
+# Assuming FILTERED_HMDA_2023 and county_shapefiles are already loaded and are correct data frames
+
+# Prepare the data
+map_data_reactive <- reactive({
+  # Check if input selections are valid
+  req(input$state_selection, input$area_grouping)
+
+  # Determine grouping variable and shapefiles based on input
+  grouping_var <- if (input$area_grouping == "County") "county_code" else "census_tract"
+  shapefiles <- if (input$area_grouping == "County") county_shapefiles else tract_shapefiles
+
+  # Initial data filtering and transformation
+  all_data <- HMDA_DATA %>%
+    filter(
+      state_code %in% input$state_selection,
+      !debt_to_income_ratio %in% c(NA, "Exempt")
+    ) %>%
+    mutate(
+      property_value = as.numeric(property_value),
+      interest_rate = as.numeric(interest_rate),
+      combined_race_ethnicity = case_when(
+        derived_race == "White" & derived_ethnicity == "Not Hispanic or Latino" ~ "White Alone",
+        derived_race == "White" & derived_ethnicity == "Hispanic or Latino" ~ "White Hispanic",
+        TRUE ~ derived_race
+      ),
+      debt_to_income_ratio = factor(
+        debt_to_income_ratio,
+        levels = c(
+          "<20%", "20%-<30%", "30%-<36%",
+          "36", "37", "38", "39", "40", "41",
+          "42", "43", "44", "45", "46", "47", "48", "49",
+          "50%-60%", ">60%"
+        )
+      ),
+      valid_race_ethnicity = !(
+        derived_race %in% c("Race not available", "Free Form Text Only") |
+        derived_ethnicity %in% c("Ethnicity not available", "Free Form Text Only")
+      )
+    )
+
+  # Table for percent_minority calculation
+  percent_minority_data <- all_data %>%
+    filter(valid_race_ethnicity) %>%
+    group_by(!!sym(grouping_var)) %>%
+    summarize(
+      percent_minority = mean(combined_race_ethnicity != "White Alone", na.rm = TRUE),
+      .groups = 'drop'
+    )
+
+  # Table for other calculations
+  other_metrics_data <- all_data %>%
+    group_by(!!sym(grouping_var)) %>%
+    summarize(
+      `Median Income` = median(income),
+      `Median Property Value` = median(property_value, na.rm = TRUE),
+      `Median Interest Rate` = median(interest_rate, na.rm = TRUE),
+      dti_over_36 = mean(
+        !debt_to_income_ratio %in% c("<20%", "20%-<30%", "30%-<36%", "36")
+      ),
+      Observations = n(),
+      .groups = 'drop'
+    )
+
+  # Merge the two tables
+  merged_data <- left_join(other_metrics_data, percent_minority_data, by = grouping_var) %>%
+    left_join(shapefiles, by = setNames("GEOID", grouping_var)) %>%
+    st_as_sf()
+
+  return(merged_data)
+})
+
+
+
+
+
+# Assuming 'map_data' is already prepared and is an sf object
+
+# Define specific breaks
+income_breaks <- reactive({
+  quantile(
+    map_data_reactive()$`Median Income`,
+    probs = seq(0, 1, by = 0.1),
+    na.rm = TRUE)%>%
+    unique()})
+
+property_value_breaks <- reactive({
+  quantile(map_data_reactive()$`Median Property Value`,
+           probs = seq(0, 1, by = 0.1),
+           na.rm = TRUE)%>%
+    unique()})
+
+percent_minority_breaks<- reactive({
+  quantile(map_data_reactive()$percent_minority,
+           probs = seq(0, 1, by = 0.1),
+           na.rm = TRUE)%>%
+    unique()})
+
+dti_breaks <- reactive({
+  quantile(map_data_reactive()$dti_over_36,
+           probs = seq(0, 1, by = 0.1),
+           na.rm = TRUE)%>%
+    unique()})
+
+
+
+###### Color Palets #####
+color_pal_income <- reactive({
+  map_data <- map_data_reactive()
+  
+  colorBin(
+    palette = "YlOrRd", 
+    domain = map_data$`Median Income`,
+    bins = income_breaks())})
+
+color_pal_property_value <- reactive({
+  map_data <-map_data_reactive()
+  colorBin(
+    palette = "YlOrRd", 
+    domain = map_data$`Median Property Value`,
+    bins = property_value_breaks())})
+
+color_pal_percent_minority <- reactive({
+  map_data <-map_data_reactive()
+  colorBin(
+    palette = "YlOrRd", 
+    domain = map_data$pecent_minority,
+    bins = percent_minority_breaks())})
+
+color_pal_dti <- reactive({
+  map_data <-map_data_reactive()
+  colorBin(
+    palette = "YlOrRd", 
+    domain = map_data$dti_over_36,
+    bins = dti_breaks())})
+
+
+```
+
+
+Sidebar {.sidebar}
+======================================
+
+```{r}
+##### Inputs Displayed in Sidebar #####
+selectInput(
+  "state_selection",
+  "Select State(s)",
+  multiple = TRUE,
+  selected = "NV",
+  choices = HMDA_DATA%>%
+    distinct(state_code)%>%
+    pull(state_code))
+
+radioButtons(
+  "area_grouping",
+  "Group By:",
+  choices = c("County", "Census Tract"),
+  selected = "County"
+  )
+```
+
+Map
+======================================
+
+Map Stuff
+--------------------------------------
+
+<!-- ### Debugging Printout -->
+<!-- ```{r} -->
+<!-- renderPrint( -->
+<!--   print(paste0( -->
+<!--     "DTI Breaks", dti_breaks() -->
+<!--     #"Income Breaks: ",income_breaks(), -->
+<!--     #"Property Value Breaks: ",property_value_breaks(), -->
+<!--     #"Minority Breask: ",percent_minority_breaks())) -->
+<!--   ))) -->
+<!-- ``` -->
+
+
+### Map Box
+
+```{r}
+output$leaflet_map<-renderLeaflet({
+  map_data <- map_data_reactive()
+  
+  color_pal_income <- color_pal_income()
+  color_pal_property_value <- color_pal_property_value()
+  color_pal_percent_minority <- color_pal_percent_minority()
+  color_pal_dti <- color_pal_dti()
+  
+  leaflet(map_data) %>%
+    addProviderTiles(provider = "Esri.WorldTopoMap")%>%
+    # {if ("Median Income" %in%)}
+  ##### Median Income #####
+  addPolygons(
+    fillColor = ~color_pal_income(`Median Income`),
+    weight = .5,
+    opacity = 1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = .7,
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    popup = ~paste0(
+      "<strong>County Name:</strong> ", area_name, "<br>",
+      "<strong>Median Interest Rate:</strong> ", percent(`Median Interest Rate`, scale = 1, accuracy = .001), "<br>",
+      "<strong>Median Property Value:</strong> ", dollar(`Median Property Value`), "<br>",
+      "<strong>Median Application Income:</strong> $", `Median Income`, "K<br>",
+      "<strong>Minority Percent:</strong> ",percent(percent_minority, accuracy = .01), "<br>",
+      "<strong> Debt-to-Income Over 36%:</strong> ", percent(dti_over_36, accuracy = .01), "<br>",
+      "<strong>Observations:</strong> ", Observations
+    ),
+    group = "Median Application Income"
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    pal = color_pal_income,
+    values = ~`Median Income`,
+    title = "Median Application Income",
+    labels = breaks,
+    labFormat = labelFormat(prefix = "$", suffix = "K", between = "K &ndash; $"),
+    opacity = 0.7,
+    group = "Median Application Income"
+  )%>%
+  ##### Property Value #####
+  addPolygons(
+    fillColor = ~color_pal_property_value(`Median Property Value`),
+    weight = .5,
+    opacity =1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = 0.7,
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    popup = ~paste0(
+      "<strong>County Name:</strong> ", area_name, "<br>",
+      "<strong>Median Interest Rate:</strong> ", percent(`Median Interest Rate`, scale = 1, accuracy = .001), "<br>",
+      "<strong>Median Property Value:</strong> ", dollar(`Median Property Value`), "<br>",
+      "<strong>Median Application Income:</strong> $", `Median Income`, "K<br>",
+      "<strong>Minority Percent:</strong> ",percent(percent_minority, accuracy = .01), "<br>",
+      "<strong> Debt-to-Income Over 36%:</strong> ", percent(dti_over_36, accuracy = .01), "<br>",
+      "<strong>Observations:</strong> ", Observations
+    ),
+    group = "Median Property Value"
+  )%>%
+  addLegend(
+    position = "bottomright",
+    pal = color_pal_property_value,
+    values = ~`Median Property Value`,
+    title = "Median Property Value",
+    labels = breaks,
+    labFormat = labelFormat(prefix = "$", between = " &ndash; $"),
+    opacity = 0.7,
+    group = "Median Property Value"
+  )%>%
+  ##### Percent Minority #####
+    addPolygons(
+    fillColor = ~color_pal_percent_minority(percent_minority),
+    weight = .5,
+    opacity = 1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = .7,
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    popup = ~paste0(
+      "<strong>County Name:</strong> ", area_name, "<br>",
+      "<strong>Median Interest Rate:</strong> ", percent(`Median Interest Rate`, scale = 1, accuracy = .001), "<br>",
+      "<strong>Median Property Value:</strong> ", dollar(`Median Property Value`), "<br>",
+      "<strong>Median Application Income:</strong> $", `Median Income`, "K<br>",
+      "<strong>Minority Percent:</strong> ",percent(percent_minority, accuracy = .01), "<br>",
+      "<strong> Debt-to-Income Over 36%:</strong> ", percent(dti_over_36, accuracy = .01), "<br>",
+      "<strong>Observations:</strong> ", Observations
+    ),
+    group = "Minority Percent"
+  )%>%
+  addLegend(
+    position = "bottomright",
+    pal = color_pal_percent_minority,
+    values = ~percent_minority,
+    title = "Minority Percent",
+    labels = breaks,
+    labFormat = labelFormat(
+      suffix = "%",
+      between = "% &ndash; ",
+      transform = function(x) round(x*100,2)),
+    opacity = 0.7,
+    group = "Minority Percent"
+  )%>%
+  ##### DTI #####
+    addPolygons(
+    fillColor = ~color_pal_dti(dti_over_36),
+    weight = .5,
+    opacity = 1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = .7,
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    popup = ~paste0(
+      "<strong>County Name:</strong> ", area_name, "<br>",
+      "<strong>Median Interest Rate:</strong> ", percent(`Median Interest Rate`, scale = 1, accuracy = .001), "<br>",
+      "<strong>Median Property Value:</strong> ", dollar(`Median Property Value`), "<br>",
+      "<strong>Median Application Income:</strong> $", `Median Income`, "K<br>",
+      "<strong>Minority Percent:</strong> ",percent(percent_minority, accuracy = .01), "<br>",
+      "<strong> Debt-to-Income Over 36%:</strong> ", percent(dti_over_36, accuracy = .01), "<br>",
+      "<strong>Observations:</strong> ", Observations
+    ),
+    group = "% Of Transactions with DTI Over 36%"
+  )%>%
+  addLegend(
+    position = "bottomright",
+    pal = color_pal_dti,
+    values = ~dti_over_36,
+    title = "% Of Transactions with DTI Over 36%",
+    labels = breaks,
+    labFormat = labelFormat(
+      suffix = "%",
+      between = "% &ndash; ",
+      transform = function(x) round(x*100,2)),
+    opacity = 0.7,
+    group = "% Of Transactions with DTI Over 36%"
+  )%>%
+  ##### Layer Controls #####
+  addLayersControl(baseGroups = c("Median Application Income", "Median Property Value", "Minority Percent","% Of Transactions with DTI Over 36%"),
+                   options = layersControlOptions(collapsed = FALSE))%>%
+    htmlwidgets::onRender("
+function(el, x) {
+  var updateLegend = function () {
+    console.log('Updating legend visibility...');
+    var checkedInput = el.querySelector('input:checked');
+    if (!checkedInput) {
+      console.log('No checked input found.');
+      return;
+    }
+    // Get the innerText of the span that is a sibling to the checked input.
+    var selectedGroup = checkedInput.parentNode.querySelector('span').innerText.trim();
+    console.log('Selected Group:', selectedGroup);
+
+    // Hide all legends and show only the one that matches the selected group.
+    var legends = document.querySelectorAll('.legend');
+    legends.forEach(function(l) {
+      l.hidden = true; // Hide all legends initially
+      var legendTitle = l.children[0]?.children[0]?.innerText.trim();
+      console.log('Checking legend:', legendTitle);
+      if (legendTitle === selectedGroup) {
+        l.hidden = false; // Show matching legend
+        console.log('Legend matched and shown:', legendTitle);
+      }
+    });
+  };
+  updateLegend();
+  // Add an event listener to update legends on base layer change.
+  this.on('baselayerchange', function(e) {
+    console.log('Base layer changed.');
+    updateLegend();
+  });
+}
+")
+  })
+
+leafletOutput("leaflet_map")
+  
+```
+
+

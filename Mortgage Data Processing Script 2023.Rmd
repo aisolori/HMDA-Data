@@ -1,0 +1,59 @@
+---
+title: "R Notebook"
+---
+
+## Importing of libraries
+
+```{r}
+library(arrow)
+library(dplyr)
+library(tidyverse)
+library(progress)
+library(ggplot2)
+library(httr)
+library(readr)
+```
+
+```{r}
+# Function to process each chunk 
+process_chunk <- function(chunk_df) {
+  chunk_df <- chunk_df %>%
+    filter(action_taken %in% c(1, "1"))
+  return(chunk_df)
+}
+
+# Initiallize final_results
+final_results <- data.frame()
+
+# Initialize a progress counter
+progress_counter <- 0
+
+# Create a text progress bar object
+pb <- txtProgressBar(min = 0, max = 1, style = 3)
+
+# Read the file in chunks
+read_delim_chunked(
+  file = "2023_combined_mlar_header.txt", # replace this with location of mlar file
+  chunk_size = 100000,
+  callback = function(chunk, pos) {
+    # This part uses the custom function made earlier
+    processed_chunk <- process_chunk(chunk)
+    final_results <<- rbind(final_results, processed_chunk)
+    # Increment the progress counter and update the progress bar
+    progress_counter <<- progress_counter + 1
+    cat("\rChunks processed:", progress_counter)
+    flush.console()
+  },
+  delim = "|",
+  escape_double = FALSE,
+  trim_ws = TRUE,
+  col_names = TRUE
+)
+
+```
+```{r}
+# Save Feather File 
+#write_feather(final_results,"2023_HMDA_ALL_STATES_ORIGINATED_ONLY.feather")
+```
+
+
