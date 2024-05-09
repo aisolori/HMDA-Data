@@ -83,5 +83,5 @@ read_delim_chunked(
 
 ``` r
 # Save Feather File 
-#write_feather(final_results,"2023_HMDA_ALL_STATES_ORIGINATED_ONLY.feather")
+write_feather(final_results,"2023_HMDA_ALL_STATES_ORIGINATED_ONLY.feather")
 ```
