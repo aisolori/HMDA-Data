@@ -40,6 +40,8 @@ library(readr)
 # Function to process each chunk 
 process_chunk <- function(chunk_df) {
   chunk_df <- chunk_df %>%
+
+    # Filtering for originated loans
     filter(action_taken %in% c(1, "1"))
   return(chunk_df)
 }
