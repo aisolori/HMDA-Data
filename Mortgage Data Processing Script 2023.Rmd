@@ -6,11 +6,8 @@ title: "R Notebook"
 
 ```{r}
 library(arrow)
-library(dplyr)
 library(tidyverse)
 library(progress)
-library(ggplot2)
-library(httr)
 library(readr)
 ```
 
