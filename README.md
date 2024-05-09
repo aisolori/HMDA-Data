@@ -58,7 +58,7 @@ pb <- txtProgressBar(min = 0, max = 1, style = 3)
 
 # Read the file in chunks
 read_delim_chunked(
-  file = "2023_combined_mlar_header.txt", # replace this with location of mlar file
+  file = "2023_combined_mlar_header.txt", # replace this with location of mlar file from https://ffiec.cfpb.gov/data-publication/modified-lar/2023
   chunk_size = 100000,
   callback = function(chunk, pos) {
     # This part uses the custom function made earlier
