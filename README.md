@@ -48,7 +48,7 @@ process_chunk <- function(chunk_df) {
 ```
 
 ### **Processing of Chunks**
-
+Results will be saved in object `final_results`
 ``` r
 # Initialize final_results
 final_results <- data.frame()
