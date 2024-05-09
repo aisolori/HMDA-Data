@@ -26,11 +26,8 @@ criteria, and compiling the results efficiently.
 
 ``` r
 library(arrow)
-library(dplyr)
 library(tidyverse)
 library(progress)
-library(ggplot2)
-library(httr)
 library(readr)
 ```
 
