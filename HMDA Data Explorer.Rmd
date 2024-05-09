@@ -21,6 +21,7 @@ library(scales)
 library(htmlwidgets)
 ```
 ```{r data loading, include = FALSE}
+# "Race & Ethnicity Labeled HMDA Data.feather" is created by Race & Ethnicity Labeler.R
 HMDA_DATA <- read_feather("Race & Ethnicity Labeled HMDA Data.feather")
 ########## Tract Shapefiles ##########
 tract_shapefiles <- tracts(cb = TRUE, year = 2023)%>%
